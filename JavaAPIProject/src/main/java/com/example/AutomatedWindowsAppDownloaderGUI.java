@@ -2,6 +2,8 @@ package com.example;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
+import javax.swing.event.ListSelectionEvent;
+import javax.swing.event.ListSelectionListener;
 import java.awt.*;
 import java.io.*;
 import java.time.Duration;
@@ -39,6 +41,7 @@ public class AutomatedWindowsAppDownloaderGUI extends JFrame {
     private JTextArea logArea;
     private JProgressBar progressBar;
     private JLabel timeLabel;
+    private JTextArea descriptionArea;
 
     private javax.swing.Timer timer;
     private Instant startTime;
@@ -46,7 +49,7 @@ public class AutomatedWindowsAppDownloaderGUI extends JFrame {
     public AutomatedWindowsAppDownloaderGUI() {
         setTitle("Windows App Installer with Search");
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        setSize(900, 650);
+        setSize(1000, 700);
         setLocationRelativeTo(null);
 
         // Main panel
@@ -66,6 +69,14 @@ public class AutomatedWindowsAppDownloaderGUI extends JFrame {
         appJList.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
         JScrollPane listScrollPane = new JScrollPane(appJList);
         listScrollPane.setPreferredSize(new Dimension(400, 400));
+
+        // Description area
+        descriptionArea = new JTextArea(8, 40);
+        descriptionArea.setEditable(false);
+        descriptionArea.setLineWrap(true);
+        descriptionArea.setWrapStyleWord(true);
+        descriptionArea.setBorder(BorderFactory.createTitledBorder("App Description"));
+        JScrollPane descScrollPane = new JScrollPane(descriptionArea);
 
         // Install button
         installButton = new JButton("Install Selected");
@@ -87,10 +98,14 @@ public class AutomatedWindowsAppDownloaderGUI extends JFrame {
         JPanel leftPanel = new JPanel(new BorderLayout(5, 5));
         leftPanel.add(searchPanel, BorderLayout.NORTH);
         leftPanel.add(listScrollPane, BorderLayout.CENTER);
-        leftPanel.add(installButton, BorderLayout.SOUTH);
+        leftPanel.add(descScrollPane, BorderLayout.SOUTH);
+
+        JPanel rightPanel = new JPanel(new BorderLayout(5, 5));
+        rightPanel.add(logScrollPane, BorderLayout.CENTER);
+        rightPanel.add(installButton, BorderLayout.SOUTH);
 
         mainPanel.add(leftPanel, BorderLayout.WEST);
-        mainPanel.add(logScrollPane, BorderLayout.CENTER);
+        mainPanel.add(rightPanel, BorderLayout.CENTER);
         mainPanel.add(progressPanel, BorderLayout.SOUTH);
 
         setContentPane(mainPanel);
@@ -101,6 +116,19 @@ public class AutomatedWindowsAppDownloaderGUI extends JFrame {
         // Event handlers
         searchButton.addActionListener(e -> searchWingetApps());
         installButton.addActionListener(e -> installSelectedApps());
+
+        // Description fetch on selection
+        appJList.addListSelectionListener(new ListSelectionListener() {
+            @Override
+            public void valueChanged(ListSelectionEvent e) {
+                if (!e.getValueIsAdjusting() && appJList.getSelectedValue() != null) {
+                    App selectedApp = appJList.getSelectedValue();
+                    fetchAndDisplayDescription(selectedApp.id);
+                } else if (appJList.getSelectedValue() == null) {
+                    descriptionArea.setText("");
+                }
+            }
+        });
     }
 
     private void searchWingetApps() {
@@ -163,6 +191,58 @@ public class AutomatedWindowsAppDownloaderGUI extends JFrame {
         }
         process.waitFor();
         return apps;
+    }
+
+    private void fetchAndDisplayDescription(String appId) {
+        descriptionArea.setText("Fetching description...");
+        new SwingWorker<String, Void>() {
+            @Override
+            protected String doInBackground() throws Exception {
+                return getWingetDescription(appId);
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    String desc = get();
+                    descriptionArea.setText(desc);
+                } catch (Exception e) {
+                    descriptionArea.setText("Failed to fetch description: " + e.getMessage());
+                }
+            }
+        }.execute();
+    }
+
+    private String getWingetDescription(String appId) {
+        StringBuilder desc = new StringBuilder();
+        try {
+            Process process = new ProcessBuilder("winget", "show", "--id", appId).start();
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+                String line;
+                boolean foundDescription = false;
+                while ((line = reader.readLine()) != null) {
+                    if (line.trim().toLowerCase().startsWith("description")) {
+                        foundDescription = true;
+                        // The line itself may be: "Description : Some text"
+                        int idx = line.indexOf(":");
+                        if (idx >= 0 && idx < line.length() - 1) {
+                            desc.append(line.substring(idx + 1).trim()).append("\n");
+                        }
+                    } else if (foundDescription) {
+                        // Keep reading until a blank line or a new key
+                        if (line.trim().isEmpty() || line.contains(":")) break;
+                        desc.append(line.trim()).append("\n");
+                    }
+                }
+            }
+            process.waitFor();
+        } catch (Exception e) {
+            desc.append("Error fetching description: ").append(e.getMessage());
+        }
+        if (desc.length() == 0) {
+            desc.append("No description available.");
+        }
+        return desc.toString().trim();
     }
 
     private void installSelectedApps() {
